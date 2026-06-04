@@ -1,8 +1,30 @@
 use std::env;
-// use std::fs;
+use std::fs;
+// use std::fs::File;
+// use std::io::Write;
 // use std::path::Path;
-// use std::path::PathBuf;
+use uuid::Uuid;
+
 use std::process::Command;
+
+enum log_Type {
+    Info,
+    Warning,
+    Error,  
+}
+
+fn milestone_log(message: &str , milestone: &str , log_Type: log_Type) {
+    println!("=============={}================", 
+    match log_Type {
+        log_Type::Info => "INFO",
+        log_Type::Warning => "WARNING",
+        log_Type::Error => "ERROR",
+    });
+    println!("Milestone: {}", milestone);
+    println!("{}", message);
+    println!("==============================");
+}
+
 fn flash_esp(project_name: &str) {
     // (3) run "cargo flash -p /dev/ttyUSB0" at  "target/xtensa-esp32-espidf/debug/{project_name}"
     Command::new("cargo")
@@ -15,15 +37,55 @@ fn flash_esp(project_name: &str) {
         .expect("Failed to run cargo flash");
 }
 
+fn project_file_config_create(project_path: &std::path::PathBuf, project_name: &str) -> Option<()> {
+    // Create a new file named "project_config.toml" in the project directory
+    if project_path.join(".espConfig").exists() {
+        milestone_log(
+            &format!("Project config folder already exists at: {}", project_path.join(".espConfig").display()),
+            "Project Config Creation",
+            log_Type::Warning
+        );  
+        return None;
+    }
+    let config_path_file = project_path.join(".espConfig/esp_config.json");
+    fs::create_dir_all(project_path.join(".espConfig")).expect("Failed to create project config folder");
+    let _id = Uuid::new_v4();
+    std::fs::write(
+        config_path_file,
+        format!(
+            "
+    {{
+        \"project_name\": \"{}\",
+        \"project_path\": \"{}\",
+        \"project_id\": \"{}\",
+        \"build_command\": \"source ~/export-esp.sh && cargo build\",
+        \"flash_command\": \"cargo flash --monitor --port /dev/ttyUSB0\"
+    }}
+    ",
+            project_name,
+            project_path.display(),
+            _id
+        ),
+    )
+    .expect("Failed to create project config file" );
+    milestone_log(
+        &format!("Project config file created at: {}", project_path.join(".espConfig/esp_config.json").display()),
+        "Project Config Creation",
+        log_Type::Info
+    );
+    Some(())
+}
+
 fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Option<String> {
     let project_dir = current_dir.join(&project_name);
-    let build_script = "source ~/export-esp.sh && cargo build";
+    // let build_script = "source ~/export-esp.sh && cargo build";
 
     if project_dir.exists() {
-        println!(
-            "Project directory already exists at: {}",
-            project_dir.display()
-        );
+       milestone_log(
+           &format!("Project directory already exists at: {}", project_dir.display()),
+           "Project Creation",
+           log_Type::Warning
+       );
         return None;
     }
     // // (1) run backround process "source ~/export-esp.sh"
@@ -47,52 +109,81 @@ fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Optio
         .status()
         .expect("Failed to run cargo generate");
     if gen_status.success() {
-        println!("Project generated successfully!");
-
-        let build_status = Command::new("sh")
-            .arg("-c")
-            .arg(build_script)
-            .current_dir(&project_dir)
-            .status()
-            .expect("Failed to run build script");
-        if build_status.success() {
-            println!("Project built successfully!");
+        let project_identifier = project_file_config_create(&project_dir, &project_name);
+        if project_identifier.is_some() {
+            milestone_log(
+                &format!(
+                    "Project config file created successfully at: {}. cd into the project directory and run 'cargo flash' to flash the project to your ESP device.", 
+                    project_dir.join(".espConfig/esp_config.json").display()
+                ),
+                "Project Config Creation",
+                log_Type::Info
+            );
         } else {
-            println!("Failed to build project.");
+            milestone_log("Failed to create project config file.", "Project Config Creation", log_Type::Error);
+            return None;
         }
+
+        // let build_status = Command::new("sh")
+        //     .arg("-c")
+        //     .arg(build_script)
+        //     .current_dir(&project_dir)
+        //     .status()
+        //     .expect("Failed to run build script");
+        // if build_status.success() {
+        //     milestone_log("Project built successfully!", "Project Build", log_Type::Info);
+        //     let fal =project_file_config_create(&project_dir, &project_name);
+        //     if fal.is_some() {
+        //         milestone_log(
+        //             &format!(
+        //                 "
+        //                 Project config file created successfully at: {}
+        //                 cd into the project directory and run 'cargo flash' to flash the project to your ESP device.
+        //                 ", 
+        //                 project_dir.join("._config/esp_config.json").display()
+        //             ),
+        //             "Project Config Creation",
+        //             log_Type::Info
+        //         );
+        //     } else {
+        //         milestone_log("Failed to create project config file.", "Project Config Creation", log_Type::Error);
+        //     }
+        // } else {
+        //     milestone_log("Failed to build project.", "Project Build", log_Type::Error);
+        // }
     } else {
-        println!("Failed to generate project.");
+        milestone_log("Failed to generate project.", "Project Generation", log_Type::Error);
         return None;
     }
 
-    println!("Project directory created at: {}", project_dir.display());
+    milestone_log("Project generated successfully!", "Project Generation", log_Type::Info);
 
     Some(String::from(project_name))
 }
 
 fn project_name_is_valid(project_name: &str) -> bool {
     if project_name.is_empty() || project_name.trim().is_empty() || project_name.contains(' ') {
-        println!("Project name cannot be empty or contain spaces.");
+        milestone_log("Project name cannot be empty or contain spaces.", "Project Name Validation", log_Type::Error);
         return false;
     }
     if project_name.contains('/') || project_name.contains('\\') {
-        println!("Project name cannot contain path separators.");
+        milestone_log("Project name cannot contain path separators.", "Project Name Validation", log_Type::Error);
         return false;
     }
     if project_name.contains('.') {
-        println!("Project name cannot contain dots.");
+        milestone_log("Project name cannot contain dots.", "Project Name Validation", log_Type::Error);
         return false;
     }
     if project_name.contains('-') {
-        println!("Project name cannot contain hyphens.");
+        milestone_log("Project name cannot contain hyphens.", "Project Name Validation", log_Type::Error);
         return false;
     }
     if project_name.len() > 100 {
-        println!("Project name cannot be longer than 100 characters.");
+        milestone_log("Project name cannot be longer than 100 characters.", "Project Name Validation", log_Type::Error);
         return false;
     }
     if project_name.len() < 3 {
-        println!("Project name cannot be shorter than 3 characters.");
+        milestone_log("Project name cannot be shorter than 3 characters.", "Project Name Validation", log_Type::Error);
         return false;
     }
     true
@@ -105,18 +196,15 @@ fn project_file_valid(project_name: &str) -> bool {
     let cargo_toml_path = project_path.join("Cargo.toml");
     let main_rs_path = project_path.join("src").join("main.rs");
     if !project_path.exists() {
-        println!("Project does not exist at: {}", project_path.display());
+        milestone_log(&format!("Project does not exist at: {}", project_path.display()), "Project File Validation", log_Type::Error);
         return false;
     }
     if !cargo_toml_path.exists() {
-        println!(
-            "Cargo.toml does not exist at: {}",
-            cargo_toml_path.display()
-        );
+        milestone_log(&format!("Cargo.toml does not exist at: {}", cargo_toml_path.display()), "Project File Validation", log_Type::Error);
         return false;
     }
     if !main_rs_path.exists() {
-        println!("main.rs does not exist at: {}", main_rs_path.display());
+        milestone_log(&format!("main.rs does not exist at: {}", main_rs_path.display()), "Project File Validation", log_Type::Error);
         return false;
     }
     true
@@ -146,19 +234,19 @@ fn main() {
 
     */
     if args.len() < 2 {
-        println!("Please provide a command.");
-        println!("Example: project run");
+        milestone_log("Please provide a command.", "Command Validation", log_Type::Error);
+        milestone_log("Example: project run", "Command Validation", log_Type::Info);
         return;
     }
 
-    println!("Current directory: {}", current_dir.display());
+    
 
     let command = &args[1];
 
     match command.as_str() {
         "create" => {
             if args.len() < 3 {
-                println!("Please provide a project name.");
+                milestone_log("Please provide a project name.", "Command Validation", log_Type::Error);
                 return;
             }
             project_name = args[2].clone();
@@ -174,22 +262,22 @@ fn main() {
             if !project_exists {
                 let project = create_project(&current_dir, &project_name);
                 if let Some(project) = project {
-                    println!("Project {} created successfully!", project);
+                    milestone_log(&format!("Project {} created successfully!", project), "Project Creation", log_Type::Info);
                 } else {
-                    println!("Failed to create project.");
+                    milestone_log("Failed to create project.", "Project Creation", log_Type::Error);
                 }
             } else {
-                println!("Project already exists. Skipping creation.");
+                milestone_log("Project already exists. Skipping creation.", "Project Creation", log_Type::Info);
             }
         }
         "run" => {
             if project_exists {
                 flash_esp(&project_name);
             } else {
-                println!("Project does not exist. Please create a project first.");
+                milestone_log("Project does not exist. Please create a project first.", "Project Run", log_Type::Error);
             }
         }
-        
+
         "build" => {
             let project_exists = project_file_valid(&project_name);
 
@@ -203,12 +291,12 @@ fn main() {
                     .status()
                     .expect("Failed to run build script");
                 if build_status.success() {
-                    println!("Project built successfully!");
+                    milestone_log("Project built successfully!", "Project Build", log_Type::Info);
                 } else {
-                    println!("Failed to build project.");
+                    milestone_log("Failed to build project.", "Project Build", log_Type::Error);
                 }
             } else {
-                println!("Project does not exist. Please create a project first.");
+                milestone_log("Project does not exist. Please create a project first.", "Project Build", log_Type::Error);
             }
         }
         "help" => {
@@ -221,10 +309,7 @@ fn main() {
             println!("uninstall <component_name> - Uninstall a component.");
             println!("update <component_name> - Update a component.");
             println!("listcomponents - List all available components.");
-
         }
-
-
 
         _ => {
             println!("Unknown command: {}", command);
