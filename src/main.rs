@@ -7,6 +7,8 @@ use std::process::Command;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 
+
+
 #[derive(Debug, Serialize, Clone , Deserialize)]
 struct ProjectConfig {
     project_name: String,
@@ -21,6 +23,28 @@ enum LogType {
     Warning,
     Error,
     Complete,
+}
+#[derive(Serialize)]
+struct ProgressEvent<'a> {
+    stage: &'a str,
+    message: &'a str,
+    current: u8,
+    total: u8,
+}
+
+
+fn emit_progress(stage: &str, message: &str, current: u8, total: u8) {
+    let event = ProgressEvent {
+        stage,
+        message,
+        current,
+        total,
+    };
+
+    let json = serde_json::to_string(&event)
+        .expect("Failed to serialize progress event");
+
+    println!("__ESP_PROGRESS__:{}", json);
 }
 
 fn log(message: &str, milestone: &str, lt: LogType) {
@@ -105,7 +129,7 @@ fn project_file_config_create(project_path: &std::path::PathBuf, project_name: &
 }
 
 fn load_project_database()->Option<Vec<ProjectConfig>>{
-    let mut projects: Vec<ProjectConfig> = Vec::new();
+    let  projects: Vec<ProjectConfig> = Vec::new();
 
     let home_dir = dirs::home_dir().expect("Failed to get home directory");
 
@@ -148,6 +172,8 @@ fn save_project_to_database(project_config: &ProjectConfig) {
 
 
 fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Option<ProjectConfig> {
+    let total_steps = 5;
+    emit_progress("Project Creation", "Validating project name...", 1, total_steps);
     let project_dir = current_dir.join(&project_name);
     // let build_script = "source ~/export-esp.sh && cargo build";
 
@@ -162,7 +188,7 @@ fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Optio
         );
         return None;
     }
-
+    emit_progress("Project Creation", "Generating project files...", 2, total_steps);
     // (2) run "cargo generate esp-rs/esp-idf-template {project_name}"
     let gen_status = Command::new("cargo")
         .arg("generate")
@@ -177,7 +203,9 @@ fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Optio
         .status()
         .expect("Failed to run cargo generate");
     if gen_status.success() {
+        emit_progress("Project Creation", "Creating project config file...", 3, total_steps);
         let project_identifier = project_file_config_create(&project_dir, &project_name);
+        emit_progress("Project Creation", "Creating project config file...", 4, total_steps);
         if project_identifier.is_some() {
             let config_data = project_identifier.as_ref().unwrap();
             log(
@@ -186,6 +214,7 @@ fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Optio
                 LogType::Complete,
             );
             save_project_to_database(&config_data);
+            emit_progress("Project Creation", "Project creation completed.", total_steps, total_steps);
             return Some(config_data.clone());
         } else {
             log(
@@ -306,6 +335,7 @@ fn main() {
 
     match command.as_str() {
         "create" => {
+
             if args.len() < 3 {
                 log(
                     "Please provide a project name.",
