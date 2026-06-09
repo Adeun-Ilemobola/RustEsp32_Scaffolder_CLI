@@ -232,17 +232,17 @@ async fn update_project_struct(project_path: &std::path::PathBuf,max_steps: u8) 
             "Project Structure Update",
             LogType::Info,
         );
-        if output_path.exists() && !file.replace.unwrap_or(false) {
-            log(
-                &format!(
-                    "File already exists and replace is false, skipping: {}",
-                    output_path.display()
-                ),
-                "Project Structure Update",
-                LogType::Warning,
-            );
-            continue;
-        }
+        // if output_path.exists() && !file.replace.unwrap_or(false) {
+        //     log(
+        //         &format!(
+        //             "File already exists and replace is false, skipping: {}",
+        //             output_path.display()
+        //         ),
+        //         "Project Structure Update",
+        //         LogType::Warning,
+        //     );
+        //     continue;
+        // }
         match download_file(&file.source_url, &output_path).await {
             Ok(_) => log(
                 &format!("File created: {}", output_path.display()),
@@ -255,6 +255,79 @@ async fn update_project_struct(project_path: &std::path::PathBuf,max_steps: u8) 
                 LogType::Error,
             ),
         }
+    }
+
+    let dependency_to_add_list = vec![
+        ("uuid", None),
+        ("serde", Some("derive")),
+        ("serde_json", None),
+    ];
+
+    for (dep, feature) in dependency_to_add_list {
+        let mut cmd = Command::new("cargo");
+        cmd.arg("add").arg(dep).current_dir(&project_path);
+        if let Some(feature_name) = feature {
+            cmd.arg("--features").arg(feature_name);
+        }
+        match cmd.status() {
+            Ok(status) if status.success() => log(
+                &format!("Dependency '{}' added successfully.", dep),
+                "Project Structure Update",
+                LogType::Info,
+            ),
+            Ok(status) => log(
+                &format!("Failed to add dependency '{}'. Exit status: {}", dep, status),
+                "Project Structure Update",
+                LogType::Error,
+            ),
+            Err(e) => log(
+                &format!("Failed to run cargo add for '{}': {}", dep, e),
+                "Project Structure Update",
+                LogType::Error,
+            ),
+        };
+    }
+
+
+    
+    emit_progress("Project Structure Update", "Updating Cargo.toml with dependencies...",  (79) as u8, max_steps);
+     Command::new("cargo")
+        .arg("add")
+        .arg("serde_json")
+        .current_dir(&project_path)
+        .status()
+        .expect("Failed to run cargo add");
+
+    let cargo_toml_path = project_path.join("Cargo.toml");
+    if cargo_toml_path.exists() {
+
+
+
+
+
+        let mut cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
+            .expect("Failed to read Cargo.toml");
+        // remove old dependencies if they exist {""}
+        let marker = "[dependencies]";
+        let dependency_to_add  =r#"uuid = { version = "1.23.2", features = ["v4"] }"#;
+        if let  Some(index) = cargo_toml_content.find(marker) {
+             // remove old dependencies if they exist {"uuid = "1.20.0"
+             let old_dependency_line = cargo_toml_content.lines().find(|line| line.contains(r#"uuid = "1.20.0"#));
+             if let Some(old_line) = old_dependency_line {
+                cargo_toml_content = cargo_toml_content.replace(old_line, "");
+            }
+
+             let insert_position = index + marker.len();
+             cargo_toml_content.insert_str(insert_position, &format!("\n{}", dependency_to_add));
+        }
+            
+        std::fs::write(&cargo_toml_path, cargo_toml_content)
+            .expect("Failed to update Cargo.toml");
+        log(
+            "Cargo.toml updated with ESP dependencies.",
+            "Project Structure Update",
+            LogType::Info,
+        );
     }
 
        
@@ -271,7 +344,7 @@ async fn update_project_struct(project_path: &std::path::PathBuf,max_steps: u8) 
 
 
 async  fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Option<ProjectConfig> {
-    let total_steps = 10;
+    let total_steps = 99;
     emit_progress("Project Creation", "Validating project name...", 1, total_steps);
     let project_dir = current_dir.join(&project_name);
     // let build_script = "source ~/export-esp.sh && cargo build";

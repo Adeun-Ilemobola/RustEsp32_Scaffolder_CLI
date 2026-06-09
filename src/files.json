@@ -4,5 +4,23 @@
     "source_url": "https://raw.githubusercontent.com/Adeun-Ilemobola/rust_esp32_based/main/src/main.rs",
     "output_path": "src/main.rs",
     "replace": true
+  },
+  {
+    "name":"utilities/mod",
+    "source_url": "https://raw.githubusercontent.com/Adeun-Ilemobola/rust_esp32_based/main/src/utilities/mod.rs",
+    "output_path": "src/utilities/mod.rs",
+    "replace": false
+  },
+  {
+    "name":"utilities/math",
+    "source_url": "https://raw.githubusercontent.com/Adeun-Ilemobola/rust_esp32_based/main/src/utilities/math.rs",
+    "output_path": "src/utilities/math.rs",
+    "replace": false
+  },
+  {
+    "name":"utilities/logger",
+    "source_url": "https://raw.githubusercontent.com/Adeun-Ilemobola/rust_esp32_based/main/src/utilities/logger.rs",
+    "output_path": "src/utilities/logger.rs",
+    "replace": false
   }
 ]
