@@ -191,6 +191,7 @@ fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Optio
     emit_progress("Project Creation", "Generating project files...", 2, total_steps);
     // (2) run "cargo generate esp-rs/esp-idf-template {project_name}"
     let gen_status = Command::new("cargo")
+        .current_dir(&project_dir)
         .arg("generate")
         .arg("esp-rs/esp-idf-template")
         .arg("cargo")
@@ -361,6 +362,7 @@ fn main() {
             }
             if args.len() >= 5 && args[3] == "--path" {
                 let custom_path = std::path::PathBuf::from(&args[4]);
+                log(&format!("the path: {}", custom_path.display()), "Path Validation", LogType::Info);
                 if !custom_path.exists() || !custom_path.is_dir() {
                     log(
                         "Provided path does not exist or is not a directory.",
@@ -398,7 +400,8 @@ fn main() {
                         );
                     }
                 }
-            } else {
+            } else if args.len() >= 3  {
+                log(&format!("the path: {}", current_dir.display()), "Path Validation", LogType::Info);
                 match create_project(&current_dir, &project_name) {
                     Some(config_data) => {
                         log(
@@ -419,6 +422,18 @@ fn main() {
                         );
                     }
                 }
+            }else {
+                log(
+                    "Invalid command format. Please provide a project name and optionally a path.",
+                    "Command Validation",
+                    LogType::Error,
+                );
+                log(
+                    "Example: project create my_project --path /path/to/projects",
+                    "Command Validation",
+                    LogType::Info,
+                );
+                return;
             }
         }
         "run" => {
