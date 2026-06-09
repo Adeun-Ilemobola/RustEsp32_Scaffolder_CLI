@@ -2,12 +2,23 @@ use std::env;
 use std::fs;
 // use std::fs::File;
 // use std::io::Write;
-// use std::path::Path;
+use std::path::Path;
+use std::path::PathBuf;
+
+use tokio;
+use anyhow::{Context, Result};
 use std::process::Command;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 
 
+#[derive(Debug, Deserialize)]
+struct TemplateFile {
+    name: Option<String>,
+    source_url: String,
+    output_path: String,
+    replace: Option<bool>,
+}
 
 #[derive(Debug, Serialize, Clone , Deserialize)]
 struct ProjectConfig {
@@ -33,6 +44,26 @@ struct ProgressEvent<'a> {
 }
 
 
+async fn download_file(git_url:&str ,  output_path:&Path) -> Result<()> {
+    let content = reqwest::get(git_url).await?.text().await?;
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(output_path, content).await?;
+    Ok(())
+}
+
+async fn load_files_json(path: &Path) -> Result<Vec<TemplateFile>> {
+    let json_text = tokio::fs::read_to_string(path)
+        .await
+        .with_context(|| format!("Failed to read JSON file: {}", path.display()))?;
+
+    let files: Vec<TemplateFile> = serde_json::from_str(&json_text)
+        .with_context(|| "Failed to parse files.json")?;
+
+    Ok(files)
+}
+
 fn emit_progress(stage: &str, message: &str, current: u8, total: u8) {
     let event = ProgressEvent {
         stage,
@@ -43,20 +74,21 @@ fn emit_progress(stage: &str, message: &str, current: u8, total: u8) {
 
     let json = serde_json::to_string(&event)
         .expect("Failed to serialize progress event");
-
+    println!("\n");
     println!("__ESP_PROGRESS__:{}", json);
 }
 
 fn log(message: &str, milestone: &str, lt: LogType) {
+     println!("\n");
     let text_for_log = format!(
         "[{}] - {}: {}",
-        milestone,
         match lt {
             LogType::Info => "INFO",
             LogType::Warning => "WARNING",
             LogType::Error => "ERROR",
             LogType::Complete => "COMPLETE",
         },
+        milestone,
         message
     );
     println!("{}", text_for_log);
@@ -171,8 +203,75 @@ fn save_project_to_database(project_config: &ProjectConfig) {
 }
 
 
-fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Option<ProjectConfig> {
-    let total_steps = 5;
+async fn update_project_struct(project_path: &std::path::PathBuf,max_steps: u8) -> bool {
+    let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let files_json_path = manifest_path.join("src").join("files.json");
+
+    let files: Vec<TemplateFile> = load_files_json(&files_json_path).await.unwrap();
+    log(
+        &format!("Updating project structure with {} files...", files.len()),
+        "Project Structure Update",
+        LogType::Info,
+    );
+
+    for (i , file) in files.iter().enumerate() {
+        emit_progress("Project Structure Update", &format!("Processing file: {}", file.name.as_ref().unwrap_or(&file.output_path)), (i + 1) as u8, max_steps);
+        let output_path = project_path.join(&file.output_path);
+        
+        log(
+            &format!("
+            Processing file: {}
+            file source: {}
+            file output path: {}
+            name: {}
+            ", 
+            output_path.display(),
+            file.source_url,
+            output_path.display(),
+            file.name.as_ref().unwrap_or(&file.output_path)),
+            "Project Structure Update",
+            LogType::Info,
+        );
+        if output_path.exists() && !file.replace.unwrap_or(false) {
+            log(
+                &format!(
+                    "File already exists and replace is false, skipping: {}",
+                    output_path.display()
+                ),
+                "Project Structure Update",
+                LogType::Warning,
+            );
+            continue;
+        }
+        match download_file(&file.source_url, &output_path).await {
+            Ok(_) => log(
+                &format!("File created: {}", output_path.display()),
+                "Project Structure Update",
+                LogType::Info,
+            ),
+            Err(e) => log(
+                &format!("Failed to create file {}: {}", output_path.display(), e),
+                "Project Structure Update",
+                LogType::Error,
+            ),
+        }
+    }
+
+       
+
+    // replace the main.rs file with a template 
+
+    // add the  uility file 
+
+    // add the components folder and  add default components
+
+    
+   return true;
+}
+
+
+async  fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Option<ProjectConfig> {
+    let total_steps = 10;
     emit_progress("Project Creation", "Validating project name...", 1, total_steps);
     let project_dir = current_dir.join(&project_name);
     // let build_script = "source ~/export-esp.sh && cargo build";
@@ -191,7 +290,7 @@ fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Optio
     emit_progress("Project Creation", "Generating project files...", 2, total_steps);
     // (2) run "cargo generate esp-rs/esp-idf-template {project_name}"
     let gen_status = Command::new("cargo")
-        .current_dir(&project_dir)
+        .current_dir(&current_dir)
         .arg("generate")
         .arg("esp-rs/esp-idf-template")
         .arg("cargo")
@@ -214,9 +313,23 @@ fn create_project(current_dir: &std::path::PathBuf, project_name: &str) -> Optio
                 "Project Config Creation",
                 LogType::Complete,
             );
-            save_project_to_database(&config_data);
-            emit_progress("Project Creation", "Project creation completed.", total_steps, total_steps);
-            return Some(config_data.clone());
+
+            if   update_project_struct(&project_dir, total_steps).await{
+                 save_project_to_database(&config_data);
+                emit_progress("Project Creation", "Project creation completed.", total_steps, total_steps);
+               return Some(config_data.clone());
+
+            }else {
+                log(
+                    "Failed to update project structure.",
+                    "Project Structure Update",
+                    LogType::Error,
+                );
+                return None;
+            }
+
+
+
         } else {
             log(
                 "Failed to create project config file.",
@@ -300,7 +413,11 @@ fn project_file_valid(current_dir: &std::path::Path) -> bool {
     true
 }
 
-fn main() {
+
+
+
+#[tokio::main]
+async fn main() {
     // get the current directory
     let current_dir = std::env::current_dir().expect("Failed to get current directory");
     let mut project_name: String = current_dir
@@ -380,7 +497,7 @@ fn main() {
                     );
                     return;
                 }
-                match create_project(&custom_path, &project_name) {
+                match create_project(&custom_path, &project_name).await {
                     Some(config_data) => {
                         log(
                             &format!(
@@ -402,7 +519,7 @@ fn main() {
                 }
             } else if args.len() >= 3  {
                 log(&format!("the path: {}", current_dir.display()), "Path Validation", LogType::Info);
-                match create_project(&current_dir, &project_name) {
+                match create_project(&current_dir, &project_name).await {
                     Some(config_data) => {
                         log(
                             &format!(

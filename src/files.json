@@ -1,0 +1,8 @@
+[
+  {
+    "name": "main",
+    "source_url": "https://raw.githubusercontent.com/Adeun-Ilemobola/rust_esp32_based/main/src/main.rs",
+    "output_path": "src/main.rs",
+    "replace": true
+  }
+]
