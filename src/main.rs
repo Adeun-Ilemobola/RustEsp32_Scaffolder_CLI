@@ -4,6 +4,7 @@ use std::fs;
 // use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::io::{self, Write};
 
 use anyhow::{Context, Result};
 use reqwest::header::{ACCEPT, USER_AGENT};
@@ -100,63 +101,6 @@ fn log(message: &str, milestone: &str, lt: LogType) {
     );
     println!("{}", text_for_log);
 }
-
-// fn project_file_config_create(
-//     project_path: &std::path::PathBuf,
-//     project_name: &str,
-// ) -> Option<ProjectConfig> {
-//     // Create a new file named "project_config.toml" in the project directory
-//     if project_path.join(".espConfig").exists() {
-//         log(
-//             &format!(
-//                 "Project config folder already exists at: {}",
-//                 project_path.join(".espConfig").display()
-//             ),
-//             "Project Config Creation",
-//             LogType::Warning,
-//         );
-//         return None;
-//     }
-//     let config_path_file = project_path.join(".espConfig/esp_config.json");
-//     fs::create_dir_all(project_path.join(".espConfig"))
-//         .expect("Failed to create project config folder");
-//     let _id = Uuid::new_v4();
-
-//     let project_config = ProjectConfig {
-//         project_name: project_name.to_string(),
-//         project_path: project_path.display().to_string(),
-//         id: Uuid::new_v4().to_string(),
-//         build_command: "source ~/export-esp.sh && cargo build".to_string(),
-//         flash_command: "cargo flash --monitor --port /dev/ttyUSB0".to_string(),
-//         install_components: Vec::new(),
-//     };
-//     std::fs::write(
-//         config_path_file,
-//         format!(
-//             "
-//     {{
-//         \"project_name\": \"{}\",
-//         \"project_path\": \"{}\",
-//         \"id\": \"{}\",
-//         \"build_command\": \"source ~/export-esp.sh && cargo build\",
-//         \"flash_command\": \"cargo flash --monitor --port /dev/ttyUSB0\",
-//         \"install_components\": []
-//     }}
-//     ",
-//             project_config.project_name, project_config.project_path, project_config.id
-//         ),
-//     )
-//     .expect("Failed to create project config file");
-//     log(
-//         &format!(
-//             "Project config file created at: {}",
-//             project_path.join(".espConfig/esp_config.json").display()
-//         ),
-//         "Project Config Creation",
-//         LogType::Info,
-//     );
-//     Some(project_config)
-// }
 
 fn load_project_database() -> Option<Vec<ProjectConfig>> {
     let projects: Vec<ProjectConfig> = Vec::new();
@@ -380,6 +324,62 @@ fn project_name_is_valid(project_name: &str) -> bool {
     true
 }
 
+
+fn select_serial_port() -> Option<String> {
+    let ports = get_available_serial_ports();
+
+    if ports.is_empty() {
+        log(
+            "No serial ports found. Plug in your ESP32 and try again.",
+            "Serial Port Detection",
+            LogType::Error,
+        );
+        return None;
+    }
+
+    println!("\nAvailable serial ports:\n");
+
+    for (index, port) in ports.iter().enumerate() {
+        println!("[{}] {}", index + 1, port);
+    }
+
+    print!("\nSelect port number: ");
+    io::stdout().flush().ok();
+
+    let mut input = String::new();
+
+    if io::stdin().read_line(&mut input).is_err() {
+        log(
+            "Failed to read selected port.",
+            "Serial Port Selection",
+            LogType::Error,
+        );
+        return None;
+    }
+
+    let selected_number: usize = match input.trim().parse() {
+        Ok(num) => num,
+        Err(_) => {
+            log(
+                "Invalid selection. Please enter a number.",
+                "Serial Port Selection",
+                LogType::Error,
+            );
+            return None;
+        }
+    };
+
+    if selected_number == 0 || selected_number > ports.len() {
+        log(
+            "Selected port number is out of range.",
+            "Serial Port Selection",
+            LogType::Error,
+        );
+        return None;
+    }
+
+    Some(ports[selected_number - 1].clone())
+}
 fn project_file_valid(current_dir: &std::path::Path) -> bool {
     if !current_dir.join(".espConfig/esp_config.json").exists() {
         log(
@@ -529,11 +529,24 @@ async fn install_component(component_name: &str) {
                 .into_iter()
                 .find(|m| m.name.to_lowercase() == component_name.to_lowercase())
             {
-                log(
-                    &format!("Component '{}' found in registry.", component_name),
-                    "Component Installation",
-                    LogType::Info,
-                );
+                if get_config
+                    .as_ref()
+                    .unwrap()
+                    .install_components
+                    .iter()
+                    .any(|c| c.to_lowercase() == component_name.to_lowercase())
+                {
+                    log(
+                        &format!(
+                            "Component '{}' is already installed in the project.",
+                            component_name
+                        ),
+                        "Component Installation",
+                        LogType::Warning,
+                    );
+                    return;
+                }
+
                 let is_valid_project = project_file_valid(
                     &std::env::current_dir().expect("Failed to get current directory"),
                 );
@@ -545,7 +558,14 @@ async fn install_component(component_name: &str) {
                     );
                     return;
                 }
-                let soc = &format!(
+
+                log(
+                    &format!("Component '{}' found in registry.", component_name),
+                    "Component Installation",
+                    LogType::Info,
+                );
+
+                let new_component = &format!(
                     "https://raw.githubusercontent.com/Adeun-Ilemobola/rust_esp32_based/refs/heads/main/src/module/{}",
                     component.name
                 );
@@ -553,8 +573,10 @@ async fn install_component(component_name: &str) {
                     .expect("Failed to get current directory")
                     .join("src")
                     .join("module");
+
                 let output_path = module_folder_path.join(&component.name);
-                match download_file(soc, &output_path).await {
+
+                match download_file(new_component, &output_path).await {
                     Ok(_) => {
                         log(
                             &format!(
@@ -567,7 +589,7 @@ async fn install_component(component_name: &str) {
                         );
                         let mod_file = module_folder_path.join("mod.rs");
                         let installed_components = &get_config.unwrap().install_components;
-                        
+
                         let mod_contents = installed_components
                             .iter()
                             .chain(std::iter::once(&component_name.replace(".rs", "")))
@@ -732,7 +754,7 @@ async fn create_project(
     }
 }
 
-fn build_project() {
+fn build_project() -> bool {
     let get_config =
         load_config(&std::env::current_dir().expect("Failed to get current directory"));
     if get_config.is_none() {
@@ -741,41 +763,120 @@ fn build_project() {
             "Project Validation",
             LogType::Error,
         );
-        return;
+        return false;
     }
     let config = get_config.unwrap();
     let build_script = &config.build_command;
-    Command::new("sh")
-        .arg("-c")
+    let status = Command::new("bash")
+        .arg("-lc")
         .arg(build_script)
         .current_dir(&config.project_path)
-        .status()
-        .expect("Failed to run build script");
+        .status();
+    match status {
+        Ok(status) if status.success() => {
+            log("Build completed successfully.", "Build", LogType::Complete);
+            true
+        }
+
+        Ok(status) => {
+            log(
+                &format!("Build failed with exit status: {}", status),
+                "Build",
+                LogType::Error,
+            );
+            false
+        }
+        Err(e) => {
+            log(
+                &format!("Failed to run build command: {}", e),
+                "Build",
+                LogType::Error,
+            );
+            false
+        }
+    }
 }
 
-fn run_project_flash() {
+
+fn get_available_serial_ports() -> Vec<String> {
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg("ls /dev/cu.*")
+        .output()
+        .expect("Failed to list serial ports");
+
+    if output.status.success() {
+        let ports = String::from_utf8_lossy(&output.stdout);
+        ports
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .filter(|item| item.contains("usbserial") || item.contains("ttyUSB") || item.contains("ttyACM"))
+            .collect()
+    } else {
+        log(
+            "Failed to get available serial ports.",
+            "Serial Port Detection",
+            LogType::Error,
+        );
+        Vec::new()
+    }
+}
+
+fn run_project_flash() -> bool {
     let get_config =
         load_config(&std::env::current_dir().expect("Failed to get current directory"));
+
     if get_config.is_none() {
         log(
             "Project config file does not exist in the current directory. Please provide a valid project path or create a project first.",
             "Project Validation",
             LogType::Error,
         );
-        return;
+        return false;
     }
     let config = get_config.unwrap();
-    Command::new("cargo")
+    let get_valid_port  = select_serial_port();
+    if get_valid_port.is_none() {
+        return false;
+    }
+    let selected_port = get_valid_port.unwrap();
+
+    let status = Command::new("cargo")
         .arg("flash")
         .arg("--monitor")
-        .arg("--port ")
-        .arg("/dev/cu.usbserial-0001 ")
-        .current_dir(format!(
-            "target/xtensa-esp32-espidf/debug/{}",
-            config.project_name
-        ))
-        .status()
-        .expect("Failed to run cargo flash");
+        .arg("--port")
+        .arg(&selected_port)
+        .current_dir(&config.project_path)
+        .status();
+
+    match status {
+        Ok(status) if status.success() => {
+            log(
+                "Flashing completed successfully.",
+                "Flashing",
+                LogType::Complete,
+            );
+
+            true
+        }
+        Ok(status) => {
+            log(
+                &format!("Flashing failed with exit status: {}", status),
+                "Flashing",
+                LogType::Error,
+            );
+            false
+        }
+        Err(e) => {
+            log(
+                &format!("Failed to run flash command: {}", e),
+                "Flashing",
+                LogType::Error,
+            );
+            false
+        }
+    }
 }
 
 #[tokio::main]
@@ -917,8 +1018,21 @@ async fn main() {
             }
         }
         "run" => {
-            build_project();
-            run_project_flash();
+            let valid_build = build_project();
+            if valid_build {
+                log(
+                    "Build successful. Starting flash process...",
+                    "Run",
+                    LogType::Info,
+                );
+                return;
+            }
+            let flash_result = run_project_flash();
+            if flash_result {
+                log("Project flashed successfully!", "Run", LogType::Complete);
+            } else {
+                log("Failed to flash project.", "Run", LogType::Error);
+            }
         }
 
         "add" => {
