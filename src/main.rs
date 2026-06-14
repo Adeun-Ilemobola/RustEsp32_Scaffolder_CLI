@@ -42,6 +42,7 @@ async fn load_all_modules() -> Result<Vec<GitHubItem>, String> {
                 && item.name != "mod.rs"
                 && item.name != "ModuleCore.rs"
         })
+        
         .collect();
 
     Ok(modules)
@@ -136,7 +137,7 @@ async fn install_component(component_name: &str) {
 
                         let mod_contents = installed_components
                             .iter()
-                            .chain(std::iter::once(&component_name.replace(".rs", "")))
+                            .map(|text| text.trim().replace(".rs", ""))
                             .map(|c| format!("pub mod {};", c.to_lowercase()))
                             .collect::<Vec<String>>()
                             .join("\n");

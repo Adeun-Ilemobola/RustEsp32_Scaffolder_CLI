@@ -1,7 +1,7 @@
-use crate::sharedTypes::{LogType , ProgressEvent};
-use std::path::Path;
-use std::io::{self, Write};
+use crate::sharedTypes::{LogType, ProgressEvent, ProgressLogShape, ProgressType};
 use anyhow::Result;
+use std::io::{self, Write};
+use std::path::Path;
 
 pub async fn download_file(git_url: &str, output_path: &Path) -> Result<()> {
     let content = reqwest::get(git_url).await?.text().await?;
@@ -21,7 +21,6 @@ pub fn emit_progress(stage: &str, message: &str, current: u8, total: u8) {
     };
 
     let json = serde_json::to_string(&event).expect("Failed to serialize progress event");
-    println!("\n");
     println!("__ESP_PROGRESS__:{}", json);
 }
 
@@ -40,8 +39,6 @@ pub fn log(message: &str, milestone: &str, lt: LogType) {
     );
     println!("{}", text_for_log);
 }
-
-
 
 pub fn project_file_valid(current_dir: &std::path::Path) -> bool {
     if !current_dir.join(".espConfig/esp_config.json").exists() {
@@ -123,12 +120,17 @@ pub fn select_serial_port(is_manual: bool) -> Option<String> {
 
         Err(err) => {
             log(
-                &format!("port Errr:{}" ,err.to_string()), 
-                "port", 
-                LogType::Error
+                &format!("port Errr:{}", err.to_string()),
+                "port",
+                LogType::Error,
             );
             return None;
         }
     }
 }
 
+pub fn progress_log(stage: ProgressType, message: String, id: String) {
+    let event = ProgressLogShape { stage, id, message };
+    let json = serde_json::to_string(&event).expect("Failed to serialize progress event");
+    println!("__ESP_PROGRESS__:{}", json);
+}

@@ -38,5 +38,18 @@ pub struct ProgressEvent<'a> {
     pub current: u8,
     pub total: u8,
 }
+#[derive(Debug, Serialize, Clone, Deserialize)]
+ pub enum ProgressType {
+     Error,
+     Complete,
+     Loading,
+     Finished
+ }
+#[derive(Debug, Serialize, Clone, Deserialize)]
+pub struct ProgressLogShape {
+    pub stage :ProgressType,
+    pub message:String,
+    pub id:String
+}
 
 pub static BRANCH_NAME: &str = "v0"; // can be set to "main" or "dev" depending on which branch you want to pull template files from
